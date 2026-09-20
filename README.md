@@ -32,7 +32,7 @@ The evaluation uses the **ND-Twins** dataset (12,000 JPEG images organised into
 | Module                | Chapter 3 Section                              | Status         |
 |-----------------------|-----------------------------------------------|----------------|
 | `src/preprocess.py`   | 3.7 — Image Pre-processing Pipeline           | ✅ Implemented |
-| `src/detect_align.py` | 3.8 — Face Detection and Alignment            | ⏳ Planned     |
+| `src/detect_align.py` | 3.8 — Face Detection and Alignment            | ✅ Implemented |
 | `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ⏳ Planned     |
 | `src/classify.py`     | 3.10–3.12 — Distance & Vulnerability Classes  | ⏳ Planned     |
 | `src/pipeline.py`     | 3.3 — Full End-to-End Pipeline                | ⏳ Planned     |
@@ -140,3 +140,56 @@ print(results["passed_count"], "passed /", results["total"], "total")
 ## License
 
 Academic / research use as part of a Final Year Project.
+
+
+
+---
+
+## Setup — Dlib Landmark Model (required for Stage 2)
+
+Stage 2 (`src/detect_align.py`, Section 3.8) uses the Dlib 68-point shape
+predictor, whose weights file (`shape_predictor_68_face_landmarks.dat`, ~100 MB)
+is **not** committed to the repository. Download it once with the helper script
+before running Stage 2:
+
+```bash
+python scripts/download_models.py
+```
+
+This downloads and extracts `shape_predictor_68_face_landmarks.dat` into the
+`models/` directory. If the file is missing at runtime, `detect_align.py` raises
+a clear error explaining exactly where to obtain it.
+
+### Running Stage 2 (Detection & Alignment)
+
+Place two sample JPEG images at `data/sample_a.jpg` and `data/sample_b.jpg`,
+then run the built-in demonstration:
+
+```bash
+python src/detect_align.py
+```
+
+Or use it programmatically:
+
+```python
+from src.detect_align import load_dlib_models, process_image_pair
+
+detector, predictor = load_dlib_models("models")
+result = process_image_pair("data/sample_a.jpg", "data/sample_b.jpg",
+                            detector, predictor)
+
+if result["status"] == "success":
+    aligned_a = result["aligned_a"]   # (160, 160, 3) uint8 RGB
+    aligned_b = result["aligned_b"]   # ready for Stage 3 embedding
+else:
+    print(result["message"])          # e.g. no face detected in image A
+```
+
+### What Stage 2 does (Section 3.8)
+
+1. **3.8.1** Face detection — Dlib HOG-based frontal face detector; returns the
+   largest detected face.
+2. **3.8.2** Landmark detection — Dlib 68-point shape predictor; returns a
+   `(68, 2)` array of landmark coordinates.
+3. **3.8.3** Face alignment — affine transformation from the eye centres and
+   nasal tip onto canonical positions, producing a normalised 160×160 crop.
