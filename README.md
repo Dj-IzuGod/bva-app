@@ -33,7 +33,7 @@ The evaluation uses the **ND-Twins** dataset (12,000 JPEG images organised into
 |-----------------------|-----------------------------------------------|----------------|
 | `src/preprocess.py`   | 3.7 — Image Pre-processing Pipeline           | ✅ Implemented |
 | `src/detect_align.py` | 3.8 — Face Detection and Alignment            | ✅ Implemented |
-| `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ⏳ Planned     |
+| `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ✅ Planned     |
 | `src/classify.py`     | 3.10–3.12 — Distance & Vulnerability Classes  | ⏳ Planned     |
 | `src/pipeline.py`     | 3.3 — Full End-to-End Pipeline                | ⏳ Planned     |
 | `app/`                | 3.13 — Prototype Web Application              | ⏳ Planned     |
@@ -88,10 +88,12 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 
 ```bash
 pip install -r requirements.txt
+pip install onnxruntime requests
 ```
 
 > **Note on `dlib`:** if the pip build fails on your platform, install it via
 > conda instead: `conda install -c conda-forge dlib`.
+> python scripts/download_models.py to fetch glint360k_r100.onnx (~261 MB) into models/
 
 > **Note on hardware:** face detection/alignment (Dlib) runs comfortably on
 > **CPU**. The ArcFace-R100 embedding stage (Stage 3, added later) is far

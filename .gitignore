@@ -228,3 +228,7 @@ models/*.pt
 data/*.jpg
 data/*.jpeg
 data/*.png
+
+# ArcFace ONNX models
+models/*.onnx
+*.onnx
