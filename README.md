@@ -33,7 +33,7 @@ The evaluation uses the **ND-Twins** dataset (12,000 JPEG images organised into
 |-----------------------|-----------------------------------------------|----------------|
 | `src/preprocess.py`   | 3.7 — Image Pre-processing Pipeline           | ✅ Implemented |
 | `src/detect_align.py` | 3.8 — Face Detection and Alignment            | ✅ Implemented |
-| `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ✅ Planned     |
+| `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ✅ Implemented     |
 | `src/classify.py`     | 3.10–3.12 — Distance & Vulnerability Classes  | ⏳ Planned     |
 | `src/pipeline.py`     | 3.3 — Full End-to-End Pipeline                | ⏳ Planned     |
 | `app/`                | 3.13 — Prototype Web Application              | ⏳ Planned     |
