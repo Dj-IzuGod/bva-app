@@ -34,7 +34,7 @@ The evaluation uses the **ND-Twins** dataset (12,000 JPEG images organised into
 | `src/preprocess.py`   | 3.7 — Image Pre-processing Pipeline           | ✅ Implemented |
 | `src/detect_align.py` | 3.8 — Face Detection and Alignment            | ✅ Implemented |
 | `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ✅ Implemented     |
-| `src/classify.py`     | 3.10–3.12 — Distance & Vulnerability Classes  | ⏳ Planned     |
+| `src/classify.py`     | 3.10–3.12 — Distance & Vulnerability Classes  | ✅ Implelmented     |
 | `src/pipeline.py`     | 3.3 — Full End-to-End Pipeline                | ⏳ Planned     |
 | `app/`                | 3.13 — Prototype Web Application              | ⏳ Planned     |
 
@@ -69,6 +69,8 @@ are intentionally **not** committed.
 ## Setup
 
 ### 1. Create an environment
+#### 2. un the stage 4 vulnerability classification report:
+python -m src.classify --embeddings data/embeddings.npz --pairs data/pairs.csv --output results/vulnerability_report.csv
 
 Using conda (recommended, because `dlib` builds are easier via conda):
 
