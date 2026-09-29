@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# --- BVA project: large model & dataset files (never commit) ---
+models/*.dat
+models/*.bz2
+models/*.onnx
+models/*.pth
+models/*.pt
+# Sample / dataset images (keep the folders via .gitkeep only)
+data/*.jpg
+data/*.jpeg
+data/*.png
+
+# ArcFace ONNX models
+models/*.onnx
+*.onnx
