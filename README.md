@@ -29,13 +29,13 @@ The evaluation uses the **ND-Twins** dataset (12,000 JPEG images organised into
 
 ## Pipeline Stages → Chapter 3 Mapping
 
-| Module                | Chapter 3 Section                              | Status         |
-|-----------------------|-----------------------------------------------|----------------|
+| Module                | Chapter 3 Section                             | Status          |
+|-----------------------|-----------------------------------------------|---------------- |
 | `src/preprocess.py`   | 3.7 — Image Pre-processing Pipeline           | ✅ Implemented |
 | `src/detect_align.py` | 3.8 — Face Detection and Alignment            | ✅ Implemented |
-| `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ✅ Implemented     |
-| `src/classify.py`     | 3.10–3.12 — Distance & Vulnerability Classes  | ✅ Implelmented     |
-| `src/pipeline.py`     | 3.3 — Full End-to-End Pipeline                | ⏳ Planned     |
+| `src/embed.py`        | 3.9 — Feature Extraction (ArcFace-R100, 512-D)| ✅ Implemented |
+| `src/classify.py`     | 3.10–3.12 — Distance & Vulnerability Classes  | ✅ Implemented |
+| `src/pipeline.py`     | 3.3 — Full End-to-End Pipeline                | ✅ Implemented |
 | `app/`                | 3.13 — Prototype Web Application              | ⏳ Planned     |
 
 **Detection / alignment:** Dlib HOG frontal-face detector + 68-point landmark

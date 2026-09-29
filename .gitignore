@@ -232,3 +232,7 @@ data/*.png
 # ArcFace ONNX models
 models/*.onnx
 *.onnx
+
+# pipeline diagnostics and generated reports
+debug_crops/
+results/

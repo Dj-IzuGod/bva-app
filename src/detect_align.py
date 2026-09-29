@@ -403,6 +403,63 @@ def process_image_pair(
 
 
 # --------------------------------------------------------------------------- #
+# Pre-aligned input path (datasets distributed as face crops, e.g. ND-TWINS)
+# --------------------------------------------------------------------------- #
+
+def _load_prealigned_crop(image_path: str):
+    """Read one pre-aligned face crop as uint8 RGB with a basic quality gate.
+
+    Returns (crop, "") on success or (None, reason) on failure. Keeps the
+    Section 3.7.4 quality spirit (readability + minimum resolution) while
+    skipping detection/alignment, which is invalid for tight crops.
+    """
+    img = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if img is None:
+        return None, "unreadable image"
+    h, w = img.shape[:2]
+    if min(h, w) < 60:  # matches preprocess.MIN_DIMENSION
+        return None, f"resolution too low ({w}x{h})"
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB), ""
+
+
+def load_prealigned_pair(
+    image_path_a: str,
+    image_path_b: str,
+) -> Dict[str, object]:
+    """Stage 2 alternative for datasets of pre-aligned 112x112 face crops.
+
+    Re-running detection + landmarks + alignment on tight crops degrades
+    embeddings (unreliable re-detection plus an extra warp/resize that
+    decorrelates genuine pairs), so the crops are handed to Stage 3
+    unchanged. Mirrors :func:`process_image_pair`'s return contract;
+    landmarks and face rects are intentionally None in this mode.
+    """
+    crop_a, reason_a = _load_prealigned_crop(image_path_a)
+    if crop_a is None:
+        return {
+            "status": "load_failed",
+            "failed_image": "A",
+            "message": f"Pre-aligned image A unusable ({reason_a}): {image_path_a}",
+        }
+    crop_b, reason_b = _load_prealigned_crop(image_path_b)
+    if crop_b is None:
+        return {
+            "status": "load_failed",
+            "failed_image": "B",
+            "message": f"Pre-aligned image B unusable ({reason_b}): {image_path_b}",
+        }
+    return {
+        "status": "success",
+        "aligned_a": crop_a,
+        "aligned_b": crop_b,
+        "landmarks_a": None,
+        "landmarks_b": None,
+        "face_rect_a": None,
+        "face_rect_b": None,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Demonstration / manual smoke test
 # --------------------------------------------------------------------------- #
 def _demo() -> None:
