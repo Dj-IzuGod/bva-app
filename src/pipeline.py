@@ -17,18 +17,29 @@ In the ND-TWINS schema, label 1 maps to 'genuine' and label 0 to 'impostor'
 (see ND_TWINS_LABEL_MAP). Bare image filenames are resolved against the
 --image-dir directory when one is provided.
 
+Input modes (--input-mode):
+
+    scene       Full Stage 1+2 preprocessing/detection/alignment. Use for
+                general scene images (default).
+    prealigned  Images are already aligned ArcFace face crops (e.g. the
+                ND-TWINS 112x112 dataset). Stages 1-2 are skipped by design:
+                re-running detection/alignment on tight crops degrades the
+                embeddings and invalidates the distance distributions.
+
 Integration contract (must match the real Stage 2/3 modules):
 
     detect_align.load_dlib_models(model_dir)     -> (detector, predictor)
     detect_align.process_image_pair(path_a, path_b, detector, predictor)
         -> dict with status 'success' or 'no_face_detected'
+    detect_align.load_prealigned_pair(path_a, path_b)
+        -> dict with status 'success' or 'load_failed'   (prealigned mode)
     embed.load_arcface_model()                   -> ONNX session
     embed.embed_pair(aligned_a, aligned_b)
         -> dict with status 'success' (or 'missing_embedding'),
            'euclidean_distance' and 'cosine_similarity'
 
-The dlib detector/predictor and the ArcFace session are created ONCE per run
-and reused for every pair.
+The dlib detector/predictor (scene mode only) and the ArcFace session are
+created ONCE per run and reused for every pair.
 """
 
 import argparse
@@ -171,7 +182,7 @@ def _get_models():
     return _DLIB_MODELS
 
 
-def score_pair(row):
+def score_pair(row, input_mode="scene"):
     """Process, embed, and score one image pair."""
     result = {
         "pair_id": row["pair_id"],
@@ -187,19 +198,27 @@ def score_pair(row):
     }
 
     try:
-        detector, predictor = _get_models()
-
-        # Stage 1 + 2: preprocess, detect, align. process_image_pair takes
-        # image PATHS and loads them itself; it also owns the "Flag & Exclude"
-        # branch when no face is found.
-        stage2 = detect_align.process_image_pair(
-            row["image_a"], row["image_b"], detector, predictor
-        )
+        # Stage 1 + 2: preprocess, detect, align. Both Stage 2 entry points
+        # take image PATHS and load the images themselves; both own the
+        # "Flag & Exclude" branch when a usable face cannot be produced.
+        if input_mode == "prealigned":
+            # Images are already aligned crops: skip detection/alignment
+            # entirely (dlib models are intentionally not loaded in this
+            # mode -- see the module docstring).
+            stage2 = detect_align.load_prealigned_pair(
+                row["image_a"], row["image_b"]
+            )
+        else:
+            detector, predictor = _get_models()
+            stage2 = detect_align.process_image_pair(
+                row["image_a"], row["image_b"], detector, predictor
+            )
 
         if stage2["status"] != "success":
-            result["status"] = "no_face_detected"
+            # 'no_face_detected' (scene mode) or 'load_failed' (prealigned).
+            result["status"] = stage2["status"]
             result["error"] = stage2.get(
-                "message", "A face could not be detected or aligned."
+                "message", "A face could not be detected, aligned, or loaded."
             )
             return result
 
@@ -300,10 +319,12 @@ def write_csv_report(results, csv_output):
         writer.writerows(results)
 
 
-def write_json_report(threshold_report, results, summary, json_output):
+def write_json_report(threshold_report, results, summary, json_output,
+                      input_mode=None):
     output_dir = os.path.dirname(os.path.abspath(json_output))
     os.makedirs(output_dir, exist_ok=True)
     payload = {
+        "run_config": {"input_mode": input_mode},
         "threshold_report": threshold_report,
         "summary": summary,
         "results": results,
@@ -325,6 +346,12 @@ def parse_args():
         help="Directory containing the images when the CSV uses bare filenames.",
     )
     parser.add_argument(
+        "--input-mode", choices=("scene", "prealigned"), default="scene",
+        help=("scene: run full Stage 1+2 detection/alignment (general images). "
+              "prealigned: images are already aligned ArcFace crops, e.g. the "
+              "ND-TWINS 112x112 dataset; Stages 1-2 are skipped by design."),
+    )
+    parser.add_argument(
         "--limit", type=int, default=None,
         help="Process only the first N pairs (smoke test).",
     )
@@ -342,6 +369,12 @@ def parse_args():
 def main():
     args = parse_args()
 
+    if args.input_mode == "prealigned":
+        # Warm the ArcFace session once; dlib models are intentionally not
+        # loaded in this mode.
+        print("Input mode: prealigned (skipping Stage 1-2 detection/alignment).")
+        embed.load_arcface_model()
+
     pairs = load_pairs(args.pairs, args.image_dir)
     if args.limit is not None:
         pairs = pairs[: args.limit]
@@ -351,7 +384,7 @@ def main():
     total = len(pairs)
     for index, row in enumerate(pairs, start=1):
         print(f"[{index}/{total}] Processing pair {row['pair_id']}...", flush=True)
-        results.append(score_pair(row))
+        results.append(score_pair(row, args.input_mode))
 
     threshold_report = derive_threshold_report(results)
     if threshold_report is None:
@@ -365,10 +398,12 @@ def main():
 
     summary = build_summary(results)
     write_csv_report(results, args.csv_output)
-    write_json_report(threshold_report, results, summary, args.json_output)
+    write_json_report(threshold_report, results, summary, args.json_output,
+                      input_mode=args.input_mode)
 
     print()
     print("=== Pipeline complete ===")
+    print(f"Input mode: {args.input_mode}")
     print(f"Total pairs: {summary['total']}")
     print(f"Successful: {summary['successful']}")
     print(f"Failed: {summary['failed']}")
