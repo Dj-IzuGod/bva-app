@@ -1,6 +1,6 @@
 /**
- * App.jsx -- route table. Layout lives in AppShell; each phase adds its
- * page here (Phase 3 dashboard, Phase 4 pair explorer, Phase 5 methodology).
+ * App.jsx -- route table. Layout lives in AppShell; pages added per phase
+ * (Phase 3 dashboard, Phase 4 pair explorer, Phase 5 live score + methodology).
  */
 
 import { Route, Routes } from "react-router-dom";
@@ -8,7 +8,9 @@ import AppShell from "./components/layout/AppShell.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import PairsPage from "./pages/PairsPage.jsx";
 import PairDetailPage from "./pages/PairDetailPage.jsx";
-import PlaceholderPage from "./pages/PlaceholderPage.jsx";
+import ScorePage from "./pages/ScorePage.jsx";
+import MethodologyPage from "./pages/MethodologyPage.jsx";
+import NotFoundPage from "./pages/NotFoundPage.jsx";
 
 export default function App() {
   return (
@@ -17,14 +19,9 @@ export default function App() {
         <Route index element={<DashboardPage />} />
         <Route path="/pairs" element={<PairsPage />} />
         <Route path="/pairs/:pairId" element={<PairDetailPage />} />
-        <Route
-          path="/methodology"
-          element={<PlaceholderPage title="Methodology" note="Arrives in Phase 5." />}
-        />
-        <Route
-          path="*"
-          element={<PlaceholderPage title="Page not found" note="Check the address." />}
-        />
+        <Route path="/score" element={<ScorePage />} />
+        <Route path="/methodology" element={<MethodologyPage />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
   );

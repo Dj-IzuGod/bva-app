@@ -8,6 +8,7 @@ import { NavLink } from "react-router-dom";
 const ITEMS = [
   { to: "/", label: "Dashboard", end: true, icon: <IconGrid /> },
   { to: "/pairs", label: "Pair Explorer", icon: <IconList /> },
+  { to: "/score", label: "Live Score", icon: <IconScore /> }, 
   { to: "/methodology", label: "Methodology", icon: <IconBook /> },
 ];
 
@@ -53,16 +54,25 @@ function IconList() {
   );
 }
 
+
+/** Icon: Live Score (crosshair). */
+function IconScore() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+         strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/** Icon: Methodology (open book). */
 function IconBook() {
   return (
-    <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden="true">
-      <path
-        d="M5.5 2.5h9A1.5 1.5 0 0 1 16 4v13.5l-6-3-6 3V4a1.5 1.5 0 0 1 1.5-1.5z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+         strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z" />
+      <path d="M4 5.5v15" />
     </svg>
   );
 }

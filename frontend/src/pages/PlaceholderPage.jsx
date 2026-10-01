@@ -14,3 +14,6 @@ export default function PlaceholderPage({ title, note }) {
     </div>
   );
 }
+
+
+/** Remeber to delete. According to Abacus instruction */

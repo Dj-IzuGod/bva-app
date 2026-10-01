@@ -12,6 +12,7 @@ from api import config
 from api.routes.health import health_bp
 from api.routes.images import images_bp
 from api.routes.report import report_bp
+from api.routes.score import score_bp
 
 
 def create_app():
@@ -39,6 +40,9 @@ def create_app():
     app.register_blueprint(health_bp, url_prefix="/api")
     app.register_blueprint(report_bp, url_prefix="/api")
     app.register_blueprint(images_bp, url_prefix="/api")
+    app.register_blueprint(score_bp)
+    
+
 
     @app.route("/")
     def index():
@@ -52,6 +56,7 @@ def create_app():
                 "/api/pairs",
                 "/api/pairs/<pair_id>",
                 "/api/image?path=<image_path>",
+                "/api/score",
             ],
         })
 
@@ -60,6 +65,9 @@ def create_app():
 
 # Supports both `python -m api.app` and Flask's app discovery.
 app = create_app()
+
+# Cap upload size for POST /api/score (Flask answers 413 above this).
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB
 
 
 if __name__ == "__main__":

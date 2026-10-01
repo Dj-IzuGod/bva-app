@@ -30,3 +30,36 @@ export async function apiGet(path) {
   }
   return response.json();
 }
+
+/**
+ * POST to a JSON endpoint. `body` may be a FormData object (file uploads --
+ * leave Content-Type unset so the browser sets the multipart boundary) or a
+ * plain object (sent as JSON). Resolves with the parsed JSON body, or throws
+ * ApiError using the server's own `message` field when available.
+ */
+export async function apiPost(path, body, { asForm = false } = {}) {
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      headers: asForm ? undefined : { "Content-Type": "application/json" },
+      body: asForm ? body : JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError(
+      "Cannot reach the BVA API. Is the Flask server running in terminal 1?",
+      0
+    );
+  }
+
+  // Read the body once; it may be an error payload or the happy-path JSON.
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new ApiError(
+      payload?.message || `Request failed (HTTP ${response.status}).`,
+      response.status
+    );
+  }
+  return payload;
+}
