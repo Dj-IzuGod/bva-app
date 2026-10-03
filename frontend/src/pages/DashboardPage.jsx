@@ -25,6 +25,8 @@ import StatusMessage from "../components/ui/StatusMessage.jsx";
 import MetricCard from "../components/dashboard/MetricCard.jsx";
 import VulnerabilityBreakdown from "../components/dashboard/VulnerabilityBreakdown.jsx";
 import DistanceHistogram from "../components/dashboard/DistanceHistogram.jsx";
+import RunConfigDisclosure from "../components/ui/RunConfigDisclosure.jsx";
+
 
 /** Render any missing report value as an em dash instead of "undefined". */
 const fmt = (value) =>
@@ -219,27 +221,10 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* ---- charts ---- */}
-      <section className="grid gap-4 lg:grid-cols-2">
-        <VulnerabilityBreakdown counts={counts} />
-        <DistanceHistogram
-          bins={bins}
-          eerThreshold={thresholds?.eer_threshold}
-          isLoading={pairs.isLoading}
-          progress={pairs.progress}
-          error={pairs.error}
-          onRetry={pairs.retry}
-        />
-      </section>
-
-      {/* ---- per-run configuration detail (kept for transparency) ---- */}
-      <Card title="Run configuration" subtitle="Values recorded by the pipeline in run_config">
-        <div className="px-5 pb-5">
-          <pre className="overflow-x-auto rounded bg-slate-50 p-4 text-xs text-slate-600">
-            {JSON.stringify(summaryData?.run_config ?? {}, null, 2)}
-          </pre>
-        </div>
-      </Card>
+      {/* ---- per-run configuration detail (collapsed until clicked) ---- */}
+      {/* NOTE: pass the API payload (summaryData), not the useApi wrapper.
+          `summary` is { data, isLoading, error, retry } and has no run_config. */}
+      <RunConfigDisclosure runConfig={summaryData?.run_config} />
     </div>
   );
 }

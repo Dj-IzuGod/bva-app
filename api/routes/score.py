@@ -3,22 +3,33 @@
 Scores ONE pair of uploaded face images on the fly by reusing the exact
 modules the batch pipeline uses (no logic is duplicated):
 
-    detect_align.process_image_pair()   -> detect + align the two photos
+    detect_align.process_image_pair()   -> detect + align raw photos
+    detect_align.load_prealigned_pair() -> accept pre-aligned 112x112 crops
     embed.embed_pair()                  -> ArcFace distance + cosine
     classify.classify_pair()            -> vulnerability grade
 
-Thresholds are read from results/pipeline_report.json at request time and
-passed straight into classify_pair -- exactly what the batch pipeline does
-(the report's threshold_report IS the classifier's source of truth).
-They are NEVER hardcoded here. If the report is missing or corrupt the
-endpoint answers 503 with instructions to run the pipeline first.
+MODE-AWARE, mirroring the batch run: the pipeline records how the report's
+thresholds were calibrated under run_config.input_mode. This endpoint reads
+that field from results/pipeline_report.json at request time and dispatches
+exactly the same way the batch pipeline does:
 
-Uploaded photos are raw (NOT pre-aligned), so this endpoint always uses
-the full detect+align path, never the prealigned loader.
+    input_mode == "prealigned" -> load_prealigned_pair (no dlib at all)
+    anything else              -> process_image_pair  (full detect+align)
+
+This guarantees live scores land on the SAME scale the thresholds were
+derived from: a threshold is only valid for the triplet (model, preprocessing
+chain, reference population), so live scoring must reuse the run's chain,
+never re-align pre-aligned crops.
+
+Thresholds are read from the report at request time and passed straight
+into classify_pair -- exactly what the batch pipeline does. They are NEVER
+hardcoded here. If the report is missing/corrupt the endpoint answers 503
+with instructions to run the pipeline first.
 
 Models are created ONCE per API process and reused for every request,
 mirroring the pipeline rule ("created once per run, reused for every
-pair"). A lock makes the one-time init safe under Flask's threaded server.
+pair"). Locks make the one-time init safe under Flask's threaded server;
+dlib is only loaded when the raw path actually needs it.
 """
 
 import json
@@ -50,41 +61,53 @@ MODELS_DIR = os.environ.get("BVA_MODEL_DIR") or os.path.join(REPO_ROOT, "models"
 # Only image types the face pipeline can actually consume.
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-# One-time model cache + lock (dlib detector/predictor + ArcFace session).
-_model_lock = threading.Lock()
-_models = None
+# One-time model caches + locks. ArcFace is needed for every request; the
+# dlib detector/predictor are ONLY needed by the raw detect+align path, so
+# they load lazily on the first raw-mode request (prealigned requests never
+# pay that cost).
+_session_lock = threading.Lock()
+_arcface_session = None
+_dlib_lock = threading.Lock()
+_dlib_models = None
 
 
-def _get_models():
-    """Load dlib + ArcFace models once per process, thread-safely.
+def _get_arcface_session():
+    """Load the ArcFace ONNX session once per process, thread-safely.
 
-    Imports are lazy ON PURPOSE: importing src.detect_align pulls in dlib,
-    which is slow -- the report-only endpoints should not pay that cost at
-    API startup.
+    Imports are lazy ON PURPOSE: importing src modules pulls in heavy
+    dependencies (dlib, onnxruntime) -- the report-only endpoints should
+    not pay that cost at API startup.
     """
-    global _models
-    if _models is None:
-        with _model_lock:
-            if _models is None:  # double-checked locking
+    global _arcface_session
+    if _arcface_session is None:
+        with _session_lock:
+            if _arcface_session is None:  # double-checked locking
+                from src import embed  # runtime import (slow)
+
+                _arcface_session = embed.load_arcface_model()
+    return _arcface_session
+
+
+def _get_dlib_models():
+    """Load dlib detector + predictor once per process (raw mode only)."""
+    global _dlib_models
+    if _dlib_models is None:
+        with _dlib_lock:
+            if _dlib_models is None:  # double-checked locking
                 if not os.path.isdir(MODELS_DIR):
                     raise FileNotFoundError(f"Models directory not found: {MODELS_DIR}")
-                from src import detect_align, embed  # runtime import (slow)
+                from src import detect_align  # runtime import (slow)
 
                 detector, predictor = detect_align.load_dlib_models(MODELS_DIR)
-                session = embed.load_arcface_model()
-                _models = {
-                    "detector": detector,
-                    "predictor": predictor,
-                    "session": session,
-                }
-    return _models
+                _dlib_models = {"detector": detector, "predictor": predictor}
+    return _dlib_models
 
 
-def _load_threshold_report():
-    """Read the 'threshold_report' block from the pipeline's JSON report.
+def _load_report():
+    """Read the pipeline's JSON report and validate what we depend on.
 
-    Returns (threshold_report, None) on success, or (None, error_dict)
-    suitable for a 503 response when the report is missing/corrupt/incomplete.
+    Returns (report_dict, None) on success, or (None, error_dict) suitable
+    for a 503 response when the report is missing/corrupt/incomplete.
 
     Re-reads the file per request (it is a few KB) so a fresh pipeline run
     is picked up without restarting the API -- same behaviour as Phase 2.
@@ -113,7 +136,28 @@ def _load_threshold_report():
                        "'could not derive thresholds'). Re-run the pipeline "
                        "with at least one scored genuine AND one impostor pair.",
         }
-    return threshold_report, None
+    return report, None
+
+
+def _identity_decision(distance, threshold_report):
+    """Verification verdict: is this one person or two?
+
+    Uses the SAME report-derived thresholds at two operating points:
+      d <= t@FAR=0.01    -> "match"     (safe even against twin impostors)
+      d <= eer_threshold -> "uncertain" (grey zone: could genuinely be either)
+      otherwise          -> "no_match"  (model sees two different people)
+    The EER point is the balanced one: the strict t@FAR=0.01 threshold is
+    tuned against twin impostors, so it rejects most true genuine pairs --
+    which is precisely the FRR finding this project documented.
+    """
+    thresholds = threshold_report.get("thresholds") or {}
+    t_strict = thresholds.get("far_0.01")
+    t_balanced = threshold_report.get("eer_threshold")
+    if t_strict is not None and distance <= t_strict:
+        return "match"
+    if t_balanced is not None and distance <= t_balanced:
+        return "uncertain"
+    return "no_match"
 
 
 def _has_allowed_extension(filename):
@@ -153,11 +197,11 @@ def score_pair():
 
     Responses:
         200  {"status": "success", distance, cosine_similarity,
-              vulnerability, is_false_accept, is_false_reject,
-              thresholds_used: {...}}
+              vulnerability, identity_decision, is_false_accept,
+              is_false_reject, input_mode_used, thresholds_used: {...}}
         400  missing/invalid upload
         413  upload above MAX_CONTENT_LENGTH (set in app.py)
-        422  no face detected / alignment failed / embedding missing
+        422  no face detected / alignment failed / load failed / embedding missing
         503  models missing OR report missing/corrupt/thresholds undelivered
         500  unexpected error (full traceback stays in the API console)
     """
@@ -175,35 +219,81 @@ def score_pair():
         # NONE + a false-reject flag). Unknown/absent -> "impostor".
         pair_type = (request.form.get("pair_type") or "impostor").strip().lower()
 
-        # ---- 2. Thresholds from the report (never hardcoded) ----------------
-        threshold_report, error = _load_threshold_report()
+        # ---- 2. Report: thresholds + input mode (never hardcoded) -----------
+        report, error = _load_report()
         if error:
             return jsonify(error), 503
 
-        # ---- 3. Load models once per process --------------------------------
+        threshold_report = report.get("threshold_report") or {}
+        # The mode the thresholds were calibrated under. If an older report
+        # predates run_config, fall back to the full detect+align path (and
+        # re-run the pipeline so the mode gets recorded).
+        input_mode = (
+            (report.get("run_config") or {}).get("input_mode") or "raw"
+        ).strip().lower()
+
+        # ---- 3. ArcFace session (always needed) -----------------------------
         try:
-            models = _get_models()
+            _get_arcface_session()
         except Exception:  # noqa: BLE001 -- model loading has many failure modes
             traceback.print_exc()
             return jsonify({
                 "error": "models_unavailable",
-                "message": f"Could not load dlib/ArcFace models from '{MODELS_DIR}'. "
-                           "Check the files are present, or point BVA_MODEL_DIR "
-                           "at the right folder (see the API terminal).",
+                "message": "Could not load the ArcFace model. Check the files "
+                           "are present, or point BVA_MODEL_DIR at the right "
+                           "folder (see the API terminal).",
             }), 503
 
-        # ---- 4. Run the real pipeline modules --------------------------------
-        from src import classify, detect_align, embed  # lazy, like _get_models
+        # ---- 4. Run the real pipeline modules (mode-aware, like the batch) --
+        from src import classify, detect_align, embed  # lazy, like _get_*
 
-        alignment = detect_align.process_image_pair(
-            path_a, path_b, models["detector"], models["predictor"]
-        )
-        if alignment.get("status") != "success":
-            return jsonify({
-                "error": alignment.get("status", "alignment_failed"),
-                "message": "Could not detect a face in one or both photos. "
-                           "Use a clear, front-facing photo.",
-            }), 422
+        if input_mode == "prealigned":
+            # Same path the batch run used for this report: the uploads are
+            # (or resemble) pre-aligned 112x112 crops, so they go straight
+            # to the embedder -- NO detection, NO re-alignment. Re-aligning
+            # pre-aligned crops shifts the embeddings onto a different scale
+            # than the one the thresholds were calibrated on.
+            try:
+                alignment = detect_align.load_prealigned_pair(path_a, path_b)
+            except Exception:  # noqa: BLE001 -- unreadable/corrupt upload
+                traceback.print_exc()
+                return jsonify({
+                    "error": "load_failed",
+                    "message": "Could not read one or both images as "
+                               "pre-aligned face crops. Upload the original "
+                               "dataset crops or clear face photos.",
+                }), 422
+            if alignment.get("status") != "success":
+                return jsonify({
+                    "error": alignment.get("status", "load_failed"),
+                    "message": "Could not read one or both images as "
+                               "pre-aligned face crops. Upload the original "
+                               "dataset crops or clear face photos.",
+                }), 422
+        else:
+            # Raw photos: full Stage 1+2 detect + align, exactly like the
+            # batch pipeline's non-prealigned mode.
+            try:
+                dlib_models = _get_dlib_models()
+            except Exception:  # noqa: BLE001 -- model loading has many failure modes
+                traceback.print_exc()
+                return jsonify({
+                    "error": "models_unavailable",
+                    "message": f"Could not load dlib models from '{MODELS_DIR}'. "
+                               "Check the files are present, or point "
+                               "BVA_MODEL_DIR at the right folder (see the API "
+                               "terminal).",
+                }), 503
+
+            alignment = detect_align.process_image_pair(
+                path_a, path_b, dlib_models["detector"], dlib_models["predictor"]
+            )
+            if alignment.get("status") != "success":
+                return jsonify({
+                    "error": alignment.get("status", "alignment_failed"),
+                    "message": "Could not detect a face in one or both photos. "
+                               "Use a clear, front-facing photo.",
+                }), 422
 
         scoring = embed.embed_pair(alignment["aligned_a"], alignment["aligned_b"])
         distance = scoring.get("euclidean_distance")
@@ -231,8 +321,10 @@ def score_pair():
             "distance": distance,
             "cosine_similarity": scoring.get("cosine_similarity"),
             "vulnerability": grading.get("vulnerability"),
+            "identity_decision": _identity_decision(distance, threshold_report),
             "is_false_accept": grading.get("is_false_accept"),
             "is_false_reject": grading.get("is_false_reject"),
+            "input_mode_used": input_mode,
             "thresholds_used": {
                 "eer": threshold_report.get("eer"),
                 "eer_threshold": threshold_report.get("eer_threshold"),

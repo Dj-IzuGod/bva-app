@@ -80,7 +80,7 @@ export default function ScorePage() {
       <header>
         <h1 className="text-xl font-semibold text-slate-900">Live Score</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Upload two face photos -- they are scored with the same ArcFace model and
+          Upload two face photos. They are scored with the same ArcFace model and
           graded with the exact thresholds from the validated pipeline run.
         </p>
       </header>
@@ -137,8 +137,8 @@ export default function ScorePage() {
               <Badge variant={VULN_VARIANT[result.vulnerability] ?? "neutral"}>
                 {result.vulnerability}
               </Badge>
-              {result.is_false_accept && <Badge variant="high">would be falsely accepted</Badge>}
-              {result.is_false_reject && <Badge variant="none">would be falsely rejected</Badge>}
+              {result.is_false_accept && <Badge variant="high">Would likely be same person or falsely accepted</Badge>}
+              {result.is_false_reject && <Badge variant="none">would be different person or falsely rejected</Badge>}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -162,11 +162,28 @@ export default function ScorePage() {
               <h3 className="mb-2 text-sm font-medium text-slate-600">Where your pair falls</h3>
               <ThresholdScale distance={result.distance} thresholds={result.thresholds_used} />
             </div>
+                        {/* Identity decision -- the verification verdict. Independent of
+                the grade: this answers "same person?", the grade answers
+                "how risky?". Labels styled inline to keep grade colours
+                (red/amber/blue/gray) reserved for vulnerability only. */}
+            <div className="rounded-lg border border-slate-200 p-4">
+              <p className="text-xs uppercase tracking-wide text-slate-400">System decision</p>
+              {result.identity_decision === "match" && (
+                <p className="mt-1 text-lg font-semibold text-teal-800">Likely the SAME person</p>
+              )}
+              {result.identity_decision === "uncertain" && (
+                <p className="mt-1 text-lg font-semibold text-amber-700">Uncertain — could be either</p>
+              )}
+              {result.identity_decision === "no_match" && (
+                <p className="mt-1 text-lg font-semibold text-slate-700">Likely DIFFERENT people</p>
+              )}
+              <p className="mt-1 text-xs text-slate-400">
+                Distance compared with the run&apos;s thresholds: strict t@FAR=0.01, balanced EER.
+              </p>
+            </div>
 
-            <p className="text-xs text-slate-400">
-              Graded as an &ldquo;{result.pair_type_assumed}&rdquo; pair using thresholds from the
-              validated run (EER {result.thresholds_used?.eer?.toFixed(4)}).
-            </p>
+
+           
           </div>
         </Card>
       )}
