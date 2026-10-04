@@ -197,3 +197,37 @@ else:
    `(68, 2)` array of landmark coordinates.
 3. **3.8.3** Face alignment — affine transformation from the eye centres and
    nasal tip onto canonical positions, producing a normalised 160×160 crop.
+
+
+## Web Frontend (Stage 6) -- two-terminal dev setup
+
+Stage 6 adds two new top-level folders (the Python pipeline in src/ is untouched):
+
+- `api/` -- Flask API: a thin, read-only layer over `results/pipeline_report.json`
+- `frontend/` -- React single-page app (Vite + Tailwind CSS)
+
+### Terminal 1 -- API server (repo root, project venv active)
+
+    pip install flask flask-cors
+    export BVA_IMAGE_DIR="C:/Users/User/Documents/ND Twins/twins_ind/twins_ind_extracted/images"
+    python -m api.app
+
+Serves http://127.0.0.1:5000 (Windows CMD: use `set BVA_IMAGE_DIR=...` instead of `export`).
+
+### Terminal 2 -- React dev server
+
+    cd frontend
+    npm install
+    npm run dev
+
+Serves http://localhost:5173 and proxies /api to Flask on :5000.
+
+Open http://localhost:5173. The Dashboard's three status cards (API connection,
+Pipeline report, Dataset images) should all show ready states.
+
+### Troubleshooting
+
+- "Cannot reach the BVA API" -> terminal 1 not running, or the proxy target
+  port in `frontend/vite.config.js` no longer matches `BVA_API_PORT`.
+- "Report not found" -> run the pipeline once (see `api/routes/health.py`).
+- Port already in use -> set `BVA_API_PORT` and update the proxy target.

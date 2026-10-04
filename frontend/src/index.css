@@ -1,0 +1,19 @@
+/* Tailwind layers + base theme (UI/UX addendum): light theme, Inter,
+   slate neutrals, teal accent. Later phases add no new base styles without
+   putting them here first. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-slate-50 font-sans text-slate-800;
+  }
+  /* Utility for metric figures, table numbers, and chart ticks. */
+  .tabular {
+    @apply tabular-nums;
+  }
+}
