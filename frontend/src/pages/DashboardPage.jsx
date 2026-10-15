@@ -221,9 +221,20 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {/* ---- per-run configuration detail (collapsed until clicked) ---- */}
-      {/* NOTE: pass the API payload (summaryData), not the useApi wrapper.
-          `summary` is { data, isLoading, error, retry } and has no run_config. */}
+      {/* ---- charts ---- */}
+      <section className="grid gap-4 lg:grid-cols-2">
+        <VulnerabilityBreakdown counts={counts} />
+        <DistanceHistogram
+          bins={bins}
+          eerThreshold={thresholds?.eer_threshold}
+          isLoading={pairs.isLoading}
+          progress={pairs.progress}
+          error={pairs.error}
+          onRetry={pairs.retry}
+        />
+      </section>
+
+      {/* ---- per-run configuration detail (kept for transparency) ---- */}
       <RunConfigDisclosure runConfig={summaryData?.run_config} />
     </div>
   );

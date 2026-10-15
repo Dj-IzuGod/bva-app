@@ -3,17 +3,31 @@
 Scores ONE pair of uploaded face images on the fly by reusing the exact
 modules the batch pipeline uses (no logic is duplicated):
 
+    _validate_faces()                   -> reject non-face / multi-face uploads
     detect_align.process_image_pair()   -> detect + align raw photos
     detect_align.load_prealigned_pair() -> accept pre-aligned 112x112 crops
     embed.embed_pair()                  -> ArcFace distance + cosine
     classify.classify_pair()            -> vulnerability grade
+
+FACE GATE: uploaded photos are user-supplied and untrusted, so every image
+is checked for EXACTLY ONE detectable face BEFORE anything is scored, in
+BOTH input modes. The gate matters most in prealigned mode, which skips
+detection by design (crops go straight to the embedder): without it, a
+photo of anything other than a face would receive an embedding, a
+distance, and a vulnerability grade -- garbage in, confident score out.
+The contract is exactly one face per image:
+    0 faces  -> 422 "no_face_detected"        (nothing to score)
+    >1 faces -> 422 "multiple_faces_detected" (ambiguous: the pipeline
+                would silently score one arbitrary face, so the result
+                would not describe what the user thinks they sent)
+A failed gate answers 422 and names the failing image.
 
 MODE-AWARE, mirroring the batch run: the pipeline records how the report's
 thresholds were calibrated under run_config.input_mode. This endpoint reads
 that field from results/pipeline_report.json at request time and dispatches
 exactly the same way the batch pipeline does:
 
-    input_mode == "prealigned" -> load_prealigned_pair (no dlib at all)
+    input_mode == "prealigned" -> load_prealigned_pair (no re-detection)
     anything else              -> process_image_pair  (full detect+align)
 
 This guarantees live scores land on the SAME scale the thresholds were
@@ -29,7 +43,9 @@ with instructions to run the pipeline first.
 Models are created ONCE per API process and reused for every request,
 mirroring the pipeline rule ("created once per run, reused for every
 pair"). Locks make the one-time init safe under Flask's threaded server;
-dlib is only loaded when the raw path actually needs it.
+dlib loads lazily on the first request that needs it -- which now includes
+the face-validation gate, so even prealigned-mode requests pay the one-time
+dlib load.
 """
 
 import json
@@ -62,9 +78,9 @@ MODELS_DIR = os.environ.get("BVA_MODEL_DIR") or os.path.join(REPO_ROOT, "models"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 # One-time model caches + locks. ArcFace is needed for every request; the
-# dlib detector/predictor are ONLY needed by the raw detect+align path, so
-# they load lazily on the first raw-mode request (prealigned requests never
-# pay that cost).
+# dlib detector/predictor are needed by the face-validation gate (every
+# request) and by the raw detect+align path, so they load lazily on the
+# first request.
 _session_lock = threading.Lock()
 _arcface_session = None
 _dlib_lock = threading.Lock()
@@ -89,7 +105,7 @@ def _get_arcface_session():
 
 
 def _get_dlib_models():
-    """Load dlib detector + predictor once per process (raw mode only)."""
+    """Load dlib detector + predictor once per process (face gate + raw)."""
     global _dlib_models
     if _dlib_models is None:
         with _dlib_lock:
@@ -184,6 +200,67 @@ def _save_upload(file_storage, temp_dir, slot):
     return path
 
 
+def _validate_faces(paths, detector):
+    """Face gate: 422 error dict if ANY upload is not a single-face photo.
+
+    Uploads are user-supplied and untrusted. Prealigned mode skips face
+    detection BY DESIGN (crops feed straight into the embedder), so without
+    this gate a non-face upload would still receive an embedding, a
+    distance, and a vulnerability grade -- garbage in, confident score out.
+    Every uploaded image is therefore checked here, in BOTH modes, before
+    any scoring happens.
+
+    The contract is EXACTLY ONE face per image:
+      0 faces  -> "no_face_detected"        (nothing to score)
+      >1 faces -> "multiple_faces_detected" (ambiguous: downstream the
+                  pipeline would silently score one arbitrary face, so the
+                  result would not describe what the user thinks they sent)
+
+    Returns None when every image passes, else an error dict for the
+    route's 422 response, naming the failing image(s).
+    """
+    import cv2  # lazy: only this gate needs cv2 directly
+
+    names = {"a": "image A", "b": "image B"}
+    unreadable, faceless, multiface = [], [], []
+
+    for slot, path in paths:
+        image = cv2.imread(path)
+        if image is None:
+            unreadable.append(slot)
+            continue
+        faces = detector(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), 1)
+        if len(faces) == 0:
+            faceless.append(slot)
+        elif len(faces) > 1:
+            multiface.append(slot)
+
+    if unreadable:
+        target = "both images" if len(unreadable) == 2 else names[unreadable[0]]
+        return {
+            "error": "load_failed",
+            "message": f"Could not read {target} as an image file. Upload a "
+                       "valid JPG/PNG/BMP/WebP photo.",
+        }
+    if faceless:
+        target = "both images" if len(faceless) == 2 else names[faceless[0]]
+        return {
+            "error": "no_face_detected",
+            "image": faceless[0] if len(faceless) == 1 else "a_and_b",
+            "message": f"No face detected in {target}. Please upload a clear "
+                       "photo of a face.",
+        }
+    if multiface:
+        target = "both images" if len(multiface) == 2 else names[multiface[0]]
+        return {
+            "error": "multiple_faces_detected",
+            "image": multiface[0] if len(multiface) == 1 else "a_and_b",
+            "message": f"More than one face detected in {target}. Please "
+                       "upload a photo containing exactly one face.",
+        }
+    return None
+
+
 @score_bp.route("/api/score", methods=["POST"])
 def score_pair():
     """Score two uploaded images and grade the pair against run thresholds.
@@ -201,7 +278,8 @@ def score_pair():
               is_false_reject, input_mode_used, thresholds_used: {...}}
         400  missing/invalid upload
         413  upload above MAX_CONTENT_LENGTH (set in app.py)
-        422  no face detected / alignment failed / load failed / embedding missing
+        422  no face / multiple faces / alignment failed / load failed /
+             embedding missing
         503  models missing OR report missing/corrupt/thresholds undelivered
         500  unexpected error (full traceback stays in the API console)
     """
@@ -244,15 +322,43 @@ def score_pair():
                            "folder (see the API terminal).",
             }), 503
 
-        # ---- 4. Run the real pipeline modules (mode-aware, like the batch) --
+        # ---- 4. Face gate: reject invalid uploads BEFORE scoring ------------
+        # Both modes are gated. In raw mode this means detection runs twice
+        # (here, then again inside process_image_pair) -- acceptable for a
+        # single-pair live endpoint, and in exchange both modes share ONE
+        # validation contract: exactly one face per image, HTTP 422, with
+        # the failing image named in the message ("no_face_detected" or
+        # "multiple_faces_detected").
+        try:
+            dlib_gate = _get_dlib_models()
+        except Exception:  # noqa: BLE001 -- model loading has many failure modes
+            traceback.print_exc()
+            return jsonify({
+                "error": "models_unavailable",
+                "message": f"Could not load the dlib detector from "
+                           f"'{MODELS_DIR}' (needed to check that the uploads "
+                           "contain exactly one face each). Check the files "
+                           "are present, or point BVA_MODEL_DIR at the right "
+                           "folder (see the API terminal).",
+            }), 503
+
+        gate_error = _validate_faces(
+            (("a", path_a), ("b", path_b)), dlib_gate["detector"]
+        )
+        if gate_error:
+            return jsonify(gate_error), 422
+
+        # ---- 5. Run the real pipeline modules (mode-aware, like the batch) --
         from src import classify, detect_align, embed  # lazy, like _get_*
 
         if input_mode == "prealigned":
             # Same path the batch run used for this report: the uploads are
             # (or resemble) pre-aligned 112x112 crops, so they go straight
-            # to the embedder -- NO detection, NO re-alignment. Re-aligning
-            # pre-aligned crops shifts the embeddings onto a different scale
-            # than the one the thresholds were calibrated on.
+            # to the embedder -- NO detection, NO re-alignment. (Face
+            # validation already happened in the step-4 gate; nothing is
+            # re-detected here.) Re-aligning pre-aligned crops shifts the
+            # embeddings onto a different scale than the one the thresholds
+            # were calibrated on.
             try:
                 alignment = detect_align.load_prealigned_pair(path_a, path_b)
             except Exception:  # noqa: BLE001 -- unreadable/corrupt upload
@@ -303,7 +409,7 @@ def score_pair():
                 "message": "Embedding failed for this pair.",
             }), 422
 
-        # ---- 5. Grade with the Stage 4 classifier (identical to the batch) ---
+        # ---- 6. Grade with the Stage 4 classifier (identical to the batch) ---
         # NOTE: thresholds are deliberately NOT re-derived per request --
         # that needs the whole run's distances; the report is the
         # validated source of truth.
@@ -313,7 +419,7 @@ def score_pair():
             threshold_report=threshold_report,
         )
 
-        # ---- 6. Respond -------------------------------------------------------
+        # ---- 7. Respond -------------------------------------------------------
         thresholds = threshold_report.get("thresholds") or {}
         return jsonify({
             "status": "success",
